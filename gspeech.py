@@ -5,7 +5,7 @@ import subprocess
 os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = "gcreds.json"
 
 
-def text_to_speech(text, output_file, language_code='en-US', voice_name='en-US-Wavenet-D'):
+def text_to_speech(text, output_file, voice_name='en-US-Wavenet-D', language_code='en-US'):
     # Instantiates a client
     client = texttospeech.TextToSpeechClient()
 

@@ -1,8 +1,8 @@
 import os
 import openai
 import json
-
 from textwrap import TextWrapper
+
 
 s1 = '''
 Juliet is a professor of Literature at a university and knows about many things. 
