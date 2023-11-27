@@ -1,4 +1,4 @@
-import os, json, time, pickle
+import os, json, time, argparse
 from textwrap import TextWrapper
 from pathlib import Path
 import openai
@@ -6,131 +6,228 @@ import openai
 from gspeech import text_to_speech, play_mp3
 import preprocess
 
-# TODO: Put this example construction in a config file.
-# Construction of an example prompt for the ChatGPT API.
-s1 = '''
-Juliet is a professor of Literature at a university and knows about many things. 
-'''
-s2 = '''
-John is a university professor, but a real idiot who doesn't know much but likes \
-to think he knows everything.
-'''
-s3 = '''
-Write a short conversation between Juliet and John about Romance literature in which \
-John really demonstrates how insufferable he is and Juliet tells him how stupid he is \
-and everybody gets upset about it.
-'''
-api_prompt = s1 + s2 + s3
 
-# Set function that we use to preprocess the speakers' lines before
-# turning them into audio:
-#
-#preprocess_line = preprocess.do_no_preprocessing
-preprocess_line = preprocess.remove_commas
+# TODO: Do I really need a custom Exception class here.
+class InvalidConfigFileException(Exception):
+    pass
 
-# Pause between speakers lines:
-pause_length = 0.25
 
-voice_juliet, voice_john = "en-GB-Neural2-A", "en-GB-Neural2-B"
+def get_input_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-r", "--reload-from-cache", action='store_true',
+                        help="Setting this argument flag will reuse the conversation previously returned from OpenAI's API.")
+    parser.add_argument("--reuse-cached-audio", action='store_true',
+                        help="Setting this flag causes the program to reuse the cached audio files instead of querying google's API.")
+    parser.add_argument("--cache-file", default="cache/cache.txt",
+                        help="The path to the cache file where the conversation obtained from the OpenAI API call is stored.")
+    parser.add_argument("-k", "--keys-file", default="keys.json",
+                        help="The path to the file containing your OpenAI credentials.")
+    parser.add_argument("-c", "--config", dest="config",
+                        help="The path to the conversation config file.")
+    parser.add_argument("--mp3-player", default="mpg123",
+                        help='The program to use to play the output audio mp3 files. Default is "mpg123"')
 
-# TODO: Put reload_from_cache as an input argument.
-reload_from_cache = True
+    # TODO: Include no-verbose option to disable incremental update print statements.
+    # TODO: Include no-cache option to indicate not to overwrite the conversation cache file.
+    args = parser.parse_args()
+    return args
 
-audio_dir = Path("audio_files/")
-cache_file = Path("cache/") / "cache.pkl"
 
-def cache(conv, cache_file):
-    with open(cache_file, "wb") as f:
-        pickle.dump(conv, f)
+class Conversation:
+    def __init__(self, args):
+        self.reload_from_cache = args.reload_from_cache
+        self.reuse_cached_audio = args.reuse_cached_audio
+        self.cache_file = args.cache_file
+        self.convo_config = args.config
+        self.api_keys_file = args.keys_file
+        self.mp3_player = args.mp3_player
 
-def load_from_cache(cache_file):
-    with open(cache_file, "rb") as f:
-        return pickle.load(f)
+    def cache(self, conv):
+        with open(self.cache_file, "w", encoding="utf-8") as f:
+            f.write(conv)
 
-def send_api_request():
-    with open("keys.json", "r") as file:
-        config = json.load(file)
-    openai.organization = config["org"]
-    openai.api_key = config["key"]
-    print("Sending request to API server. Waiting for openai response...")
-    a = openai.ChatCompletion.create(
-        model="gpt-3.5-turbo",
-        messages=[
-            {
-                "role": "user", "content": api_prompt
-            },
-        ]
-    )
-    print("Response received.")
-    conv = a["choices"][0]["message"]["content"]
-    return conv
+    def load_from_cache(self):
+        with open(self.cache_file, "r") as f:
+            conv = f.read()
+        return conv
 
-# TODO: Better way to do this without using global variable declarations:
-def load_convo():
-    global reload_from_cache, cache_file
-    if reload_from_cache:
-        try:
-            print("Attempting to load conversation from cache.")
-            conv = load_from_cache(cache_file)
-        except:
-            print("Failed to load from cache.")
-            reload_from_cache = False
-    if not reload_from_cache:
-        conv = send_api_request()
-        cache(conv, cache_file)
-    print("Conversation is now loaded.\n")
-    return conv
+    def load_config(self, conversation_config=None):
+        if conversation_config == None:
+            conversation_config = self.convo_config
+        with open(conversation_config, "r") as file:
+            config = json.load(file)
+        self.prompt = config["prompt"]
+        characters = config["characters"]
+        character_dict = lambda c: (c["name"], {"voice": c["voice"], "language": c["language"]})
+        self.characters = dict([character_dict(c) for c in characters])
 
-# Code for wrapping text on output so their lines are easier to read:
-indent_juliet = "".join([" "] * (len("Juliet: ")))
-indent_john = "".join([" "] * (len("Juliet: ")))
-tw_prompt = TextWrapper(width=80)
-tw_juliet = TextWrapper(width=80, subsequent_indent=indent_juliet)
-tw_john = TextWrapper(width=80, subsequent_indent=indent_john)
+        preprocess_line_methods = config["preprocess_line_methods"]
+        if isinstance(preprocess_line_methods, str):
+            self.preprocess_line_methods = [preprocess_line_methods]
+        elif isinstance(preprocess_line_methods, list):
+            self.preprocess_line_methods = []
+            for method in preprocess_line_methods:
+                self.preprocess_line_methods.append(getattr(preprocess, method))
+        else:
+            error_msg = (f'In the conversation config file {conversation_config}, the "preprocess_line_methods" field '
+                         f'must be either the name of one of the  methods in the preprocess module, or a list of '
+                         f'methods in the preprocess module.')
+            raise InvalidConfigFileException(error_msg)
+
+        self.audio_pause_length = config["audio_pause_length"]
+        self.audio_dir = Path(config["audio_dir"])
+        if not self.audio_dir.exists():
+            self.audio_dir.mkdir()
+
+    def preprocess_line(self, line):
+        for method in self.preprocess_line_methods:
+            line = method(line)
+        return line
+
+    def send_api_request(self):
+        with open(self.api_keys_file, "r") as file:
+            config = json.load(file)
+        # Some credentials might require "org":
+        if "org" in config.keys():
+            openai.organization = config["org"]
+        openai.api_key = config["key"]
+        print("Sending request to API server. Waiting for openai response...")
+        # TODO: Enable parameters like temperature.
+        #  Define the prompt format in a config file instead, so it's easier to switch to another LLM.
+        a = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {
+                    "role": "user", "content": self.prompt
+                },
+            ]
+        )
+        print("Response received.")
+        conv = a["choices"][0]["message"]["content"]
+        return conv
+
+    def load_convo(self):
+        '''
+        Either reload the previous conversation from the cache file, or make an API request for a new conversation
+        to OpenAI's model.
+        :return: Returns the conversation as a string, although also saves it in an object member variable for later use.
+        '''
+        if self.reload_from_cache:
+            try:
+                print("Attempting to load conversation from cache.")
+                conv = self.load_from_cache()
+            except Exception as e:
+                # TODO: Check that this raises appropriately.
+                print('Failed to load the conversation from the cache file. The default name of the cache file is "cache.txt".\n\n')
+                raise e
+        if not self.reload_from_cache:
+            conv = self.send_api_request()
+            # TODO: Implement no-cache argument flag feature.
+            self.cache(conv)
+        print("Conversation is now loaded.\n")
+        self.convo = conv
+        return self.convo
+
+    def get_speaker_of_line(self, line):
+        '''
+        Extracts the name from the beginning prefix of the line that comes before the first ":" character.
+        :param line: A string
+        :return:
+        '''
+        name = line.split(":")[0]
+        assert name in self.characters.keys(), f'Error: "{name}" is not the name of a character in the conversation.'
+        return name
+
+    def is_nonspeaking_line(self, line):
+        '''
+        Some lines are blanks, and we need to ignore them.
+        :param line: A string
+        :return: True if line is an actual line of the dialogue, and False if it is a blank line or something else.
+        '''
+        if ":" not in line:
+            return True
+        else:
+            prefix = line.split(":")
+            # Check that one of the character names is in the line prefix.
+            for name in self.characters.keys():
+                if name in prefix:
+                    return False
+            # It's conceivable that OpenAI returns a line that doesn't follow the usual format.
+            # We treat these lines as non-speaking lines.
+            return True
+
+    def build_output(self):
+        # Ordered list of alternating speakers' lines:
+        output = []
+        text_wrappers = construct_text_wrappers(self.characters)
+        i = 0
+        lines = self.convo.split("\n")
+        for line in lines:
+            if self.is_nonspeaking_line(line):
+                continue
+            name = self.get_speaker_of_line(line)
+            character = self.characters[name]
+            voice, language = character["voice"], character["language"]
+            text_block = text_wrappers[name].fill(line)
+            audio_file = self.audio_dir / "line_{}.mp3".format(str(i).zfill(2))
+            i += 1
+            if not self.reuse_cached_audio:
+                line_ = line[len(name + ": "):]
+
+                line_ = self.preprocess_line(line_)
+                text_to_speech(line_, audio_file,
+                               voice_name=voice, language_code=language)
+            output.append({"text": text_block, "audio": str(audio_file)})
+        self.output = output
+        return output
+
+    def play_output(self):
+        tw_prompt = TextWrapper(width=80)
+        prompt = tw_prompt.fill(self.prompt)
+        print(prompt + "\n")
+        for line in self.output:
+            text, audio = line["text"], line["audio"]
+            print(text + "\n")
+            play_mp3(audio, self.mp3_player)
+            time.sleep(self.audio_pause_length)
+
+    def build_single_file_output(self):
+        '''
+        For building the audio output into a single mp3 file
+        :return:
+        '''
+        # TODO: Fill in.
+        pass
+
+    def play_single_file_output(self):
+        '''
+        For playing an mp3 file that was created by build_single_file_output() above.
+        :return:
+        '''
+        # TODO: Fill in.
+        pass
+
+def construct_text_wrappers(characters):
+    '''
+    Constructs TextWrapper objects that we use to make the print out of the dialogue easier to read.
+    :param characters: A dictionary whose keys are the names of the characters in the dialogue.
+    :return: A dictionary of the TextWrapper objects indexed by the names of the characters.
+    '''
+    text_wrapper = {}
+    for name in characters.keys():
+        indent_length = len(name) + 2
+        indent = "".join([" "]*indent_length)
+        text_wrapper[name] = TextWrapper(width=80, subsequent_indent=indent)
+    return text_wrapper
 
 
 if __name__ == "__main__":
-    conv = load_convo()
-    lines = conv.split("\n")
-
-    # Ordered list of alternating speakers' lines:
-    text_blocks = []
-
-    i = 0
-    for line in lines:
-        if "Juliet:" in line[:len("Juliet: ")]:
-            text_blocks.append(tw_juliet.fill(line))
-            line_ = line[len("Juliet: "):]
-            line_ = preprocess_line(line_)
-            if not reload_from_cache:
-                text_to_speech(line_, audio_dir / "line-{}.mp3".format(i),
-                               voice_name=voice_juliet, language_code="en-GB")
-            i += 1
-        elif "John:" in line[:len("John: ")]:
-            text_blocks.append(tw_john.fill(line))
-            line_ = line[len("John: "):]
-            line_ = preprocess_line(line_)
-            if not reload_from_cache:
-                text_to_speech(line_, audio_dir / "line-{}.mp3".format(i),
-                               voice_name=voice_john, language_code="en-GB")
-            i += 1
-        else:
-            # some lines are blanks, or the initial prompt.
-            continue
-    nlines = i
-
-    prompt = tw_prompt.fill(lines[0])
-    print(prompt + "\n")
-    for i in range(nlines):
-        print(text_blocks[i] + "\n")
-        play_mp3(audio_dir / "line-{}.mp3".format(i))
-        time.sleep(pause_length)
-
-
-
-
-
-
+    args = get_input_args()
+    convo = Conversation(args)
+    convo.load_config()
+    convo.load_convo()
+    convo.build_output()
+    convo.play_output()
 
 
 

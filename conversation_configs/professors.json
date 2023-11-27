@@ -1,0 +1,19 @@
+{
+  "characters":
+          [
+            {
+              "name": "Juliet",
+              "voice": "en-GB-Neural2-A",
+              "language": "en-GB"
+            },
+            {
+              "name": "John",
+              "voice": "en-GB-Neural2-B",
+              "language": "en-GB"
+            }
+          ],
+  "audio_pause_length": 0.25,
+  "audio_dir": "audio_files/",
+  "preprocess_line_methods": ["remove_markup_in_parenthesis", "remove_commas"],
+  "prompt": "Juliet is a professor of Literature at a university and knows about many things. John is a university professor, but a real idiot who doesn't know much but likes to think he knows everything. Write a short conversation between Juliet and John about Romance literature in which John really demonstrates how insufferable he is and Juliet tells him how stupid he is and everybody gets upset about it."
+}

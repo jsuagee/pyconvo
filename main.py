@@ -20,7 +20,7 @@ and everybody gets upset about it.
 if __name__ == "__main__":
     with open("keys.json", "r") as file:
         config = json.load(file)
-    openai.organization = config["org"]
+    #openai.organization = config["org"]
     openai.api_key = config["key"]
 
     a = openai.ChatCompletion.create(
