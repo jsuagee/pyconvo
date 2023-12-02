@@ -2,7 +2,7 @@
 This is a repository for generating conversations using ChatGPT and then 
 turning these conversations into audio using Google Cloud's text-to-speech API. 
 This is experimental code, and is being provided here in the off chance that it proves 
-useful later on to someone else. Feel free to do whatever you want with it.
+useful later on to someone else. Feel free to use it in whichever way you like.
 
 ### Google Cloud
 The text-to-speech API must be enabled in your Google Cloud account. See 
@@ -16,6 +16,8 @@ root directory `pyconvo/`.
 Place your OpenAI keys file in the root directory. The default name is `keys.json`. 
 If it is named something else you must pass the argument `-k <filename>` as an 
 argument to the python program below.
+
+Templates for each of these credential files are included.
 
 ### Install mpg123 (or other mp3 player program)
 mpg123 (<https://www.mpg123.de/) is an open source program for playing mp3 audio files. 

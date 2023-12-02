@@ -45,8 +45,8 @@ def play_mp3(path_to_mp3, mp3player='mpg123'):
         raise e
 
 
+# For initial testing:
 if __name__ == "__main__":
-    #input_text = input("Enter the text you want to convert to speech: ")
     input_text = "Say something deep and profound."
     output_filename = "google.mp3"
     text_to_speech(input_text, output_filename)

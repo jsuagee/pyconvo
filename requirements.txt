@@ -1,4 +1,4 @@
-aiohttp
-openai
-gTTS
-google-cloud-texttospeech
+aiohttp==3.8.5
+openai==0.27.8
+gTTS==2.3.2
+google-cloud-texttospeech==2.14.1
